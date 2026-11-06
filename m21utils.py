@@ -797,7 +797,7 @@ class M21Utils:
             # we ignore all invisible objects
             return True
 
-        if kind in ('direction', 'tempo', 'staffinfo'):
+        if kind in ('direction', 'tempo', 'staffinfo', 'instrument'):
             # we ignore empty TextExpressions/MetronomeMarks/StaffLayouts
             if M21Utils.extra_to_string(el, kind, detail):
                 # not empty, don't ignore
@@ -891,7 +891,10 @@ class M21Utils:
         # since they are non-printed.  We also try to de-duplicate redundant clefs.
         mostRecentClef: m21.clef.Clef | None = None
         for el in initialList:
-            if not DetailLevel.objIsIncluded(el, detail):
+            if isinstance(el, m21.instrument.Instrument):
+                if not DetailLevel.includesDirections(detail):
+                    continue
+            elif not DetailLevel.objIsIncluded(el, detail):
                 # ignore objects that were not requested
                 continue
 
@@ -933,8 +936,6 @@ class M21Utils:
             spanner_types.append(m21.spanner.Ottava)
         if DetailLevel.includesTremolos(detail):
             spanner_types.append(m21.expressions.TremoloSpanner)
-        if DetailLevel.includesGlissandos(detail):
-            spanner_types.append(m21.spanner.Glissando)
 
         spannerElementClasses: tuple[type, ...] = (
             m21.note.GeneralNote,
@@ -1059,6 +1060,8 @@ class M21Utils:
     def extra_to_kind(extra: m21.base.Music21Object) -> str:
         if isinstance(extra, m21.clef.Clef):
             return 'clef'
+        if isinstance(extra, m21.instrument.Instrument):
+            return 'instrument'
         if isinstance(extra, m21.meter.TimeSignature):
             return 'timesig'
         if isinstance(extra, m21.tempo.TempoIndication):
@@ -1081,8 +1084,6 @@ class M21Utils:
             return 'diminuendo'
         if isinstance(extra, m21.spanner.Slur):
             return 'slur'
-        if isinstance(extra, m21.spanner.Glissando):
-            return 'glissando'
         if isinstance(extra, (m21.expressions.ArpeggioMark, m21.expressions.ArpeggioMarkSpanner)):
             return 'arpeggio'
         if isinstance(extra, m21.harmony.ChordSymbol):
@@ -1148,6 +1149,10 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.clef.Clef)
             return M21Utils.clef_to_symbolic(extra, kind, detail)
+        if kind == 'instrument':
+            if t.TYPE_CHECKING:
+                assert isinstance(extra, m21.instrument.Instrument)
+            return M21Utils.instrument_to_symbolic(extra, kind, detail)
         if kind == 'timesig':
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.meter.TimeSignature)
@@ -1180,10 +1185,6 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.spanner.Slur)
             return M21Utils.slur_to_symbolic(extra, kind, detail)
-        if kind == 'glissando':
-            if t.TYPE_CHECKING:
-                assert isinstance(extra, m21.spanner.Glissando)
-            return M21Utils.glissando_to_symbolic(extra, kind, detail)
         if kind == 'arpeggio':
             if t.TYPE_CHECKING:
                 assert isinstance(
@@ -1248,6 +1249,8 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.clef.Clef)
             return M21Utils.clef_to_infodict(extra, kind, detail)
+        if kind == 'instrument':
+            return {}
         if kind == 'timesig':
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.meter.TimeSignature)
@@ -1280,10 +1283,6 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.spanner.Slur)
             return M21Utils.slur_to_infodict(extra, kind, detail)
-        if kind == 'glissando':
-            if t.TYPE_CHECKING:
-                assert isinstance(extra, m21.spanner.Glissando)
-            return M21Utils.glissando_to_infodict(extra, kind, detail)
         if kind == 'arpeggio':
             if t.TYPE_CHECKING:
                 assert isinstance(
@@ -1373,7 +1372,7 @@ class M21Utils:
         elif kind in ('chordsym', 'ending', 'direction',
                 'clef', 'keysig', 'timesig', 'tempo', 'dynamic',
                 'staffinfo', 'systembreak', 'pagebreak',
-                'rehearsalmark', 'pedalbounce',
+                'rehearsalmark', 'pedalbounce','instrument',
                 'pedalgapstart', 'pedalgapend'):
             # we ignore duration for ChordSymbols, it is often 0.0 or 1.0, and meaningless.
             # we also ignore duration for endings (RepeatBrackets).  We count how many measures
@@ -2195,52 +2194,6 @@ class M21Utils:
         return {}
 
     @staticmethod
-    def glissando_to_string(
-        glissando: m21.spanner.Glissando,
-        kind: str,
-        detail: DetailLevel | int
-    ) -> str | None:
-        if len(glissando) < 2:
-            return None
-
-        start = glissando[0]
-        end = glissando[-1]
-
-        return f'{start} -> {end}'
-
-    @staticmethod
-    def glissando_to_symbolic(
-        glissando: m21.spanner.Glissando,
-        kind: str,
-        detail: DetailLevel | int
-    ) -> str | None:
-        if len(glissando) < 2:
-            return None
-
-        start = glissando[0]
-        end = glissando[-1]
-
-        return f'{start} -> {end}'
-    
-    @staticmethod
-    def glissando_to_infodict(
-        glissando: m21.spanner.Glissando,
-        kind: str,
-        detail: DetailLevel | int
-    ) -> str | None:
-        if len(glissando) < 2:
-            return None
-
-        start = glissando[0]
-        end = glissando[-1]
-
-        return {
-            'startpitch': str(start.pitch) if hasattr(start, 'pitch') else str(start),
-            'endpitch': str(end.pitch) if hasattr(end, 'pitch') else str(end),
-            'linetype': str(glissando.lineType),
-        }
-
-    @staticmethod
     def arpeggio_to_string(
         arp: m21.expressions.ArpeggioMark | m21.expressions.ArpeggioMarkSpanner,
         kind: str,
@@ -2445,6 +2398,17 @@ class M21Utils:
         return {}
 
     @staticmethod
+    def instrument_to_symbolic(
+        inst: m21.instrument.Instrument,
+        kind: str,
+        detail: DetailLevel | int
+    ) -> str | None:
+        name: str = (inst.instrumentName or inst.partName or '').strip()
+        if not name and inst.midiProgram is not None:
+            name = f'program {inst.midiProgram}'
+        return name or None
+
+    @staticmethod
     def extra_to_string(
         extra: m21.base.Music21Object,
         kind: str,
@@ -2452,8 +2416,6 @@ class M21Utils:
     ) -> str | None:
         if isinstance(extra, m21.spanner.Slur):
             return M21Utils.slur_to_string(extra, kind, detail)
-        if isinstance(extra, m21.spanner.Glissando):
-            return M21Utils.glissando_to_string(extra, kind, detail)
         if isinstance(extra, (m21.key.Key, m21.key.KeySignature)):
             return M21Utils.keysig_to_string(extra, kind, detail)
         if isinstance(extra, m21.expressions.TextExpression):
