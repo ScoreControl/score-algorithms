@@ -1,0 +1,134 @@
+{
+  "file": "tbd-ss-8-12.mscz",
+  "metadata": {
+    "composer": "Composer / arranger",
+    "creationDate": "2025-10-03",
+    "platform": "Microsoft Windows",
+    "subtitle": "Subtitle",
+    "workTitle": "Untitled score",
+    "measureCount": 107
+  },
+  "instrumentation": [
+    {
+      "partId": "1",
+      "trackName": "Alto",
+      "instrumentId": "alto",
+      "longName": "Girl Solo",
+      "shortName": "G.S.",
+      "clef": "",
+      "midiChannel": "0",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "10",
+      "trackName": "Tenor",
+      "instrumentId": "tenor",
+      "longName": "Boy Solo",
+      "shortName": "B.S.",
+      "clef": "G8vb",
+      "midiChannel": "10",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "11",
+      "trackName": "Tenor",
+      "instrumentId": "tenor",
+      "longName": "Hindustani Solo",
+      "shortName": "H.S.",
+      "clef": "G8vb",
+      "midiChannel": "11",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "2",
+      "trackName": "Soprano",
+      "instrumentId": "soprano",
+      "longName": "Soprano 1",
+      "shortName": "S. 1",
+      "clef": "",
+      "midiChannel": "1",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "3",
+      "trackName": "Soprano",
+      "instrumentId": "soprano",
+      "longName": "Soprano 2",
+      "shortName": "S. 2",
+      "clef": "",
+      "midiChannel": "2",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "4",
+      "trackName": "Alto 1",
+      "instrumentId": "alto",
+      "longName": "Alto 1",
+      "shortName": "A. 1",
+      "clef": "",
+      "midiChannel": "3",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "5",
+      "trackName": "Alto 2",
+      "instrumentId": "alto",
+      "longName": "Alto 2",
+      "shortName": "A. 2",
+      "clef": "",
+      "midiChannel": "4",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "6",
+      "trackName": "Tenor 1",
+      "instrumentId": "tenor",
+      "longName": "Tenor 1",
+      "shortName": "T. 1",
+      "clef": "G8vb",
+      "midiChannel": "5",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "7",
+      "trackName": "Tenor 2",
+      "instrumentId": "tenor",
+      "longName": "Tenor 2",
+      "shortName": "T. 2",
+      "clef": "G8vb",
+      "midiChannel": "6",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "8",
+      "trackName": "Bass 1",
+      "instrumentId": "bass",
+      "longName": "Bass 1",
+      "shortName": "B. 1",
+      "clef": "F",
+      "midiChannel": "7",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    },
+    {
+      "partId": "9",
+      "trackName": "Bass 2",
+      "instrumentId": "bass",
+      "longName": "Bass 2",
+      "shortName": "B. 2",
+      "clef": "F",
+      "midiChannel": "8",
+      "midiProgram": "52",
+      "synthesizer": "Fluid"
+    }
+  ]
+}
