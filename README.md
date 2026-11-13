@@ -21,19 +21,22 @@ This branch provides two lightweight, modular scripts for parsing MuseScore file
 
 ## 1. `extract_score.py`: Score Extraction & Metadata
 
-Extracts standard MusicXML and parses score metadata along with complete instrumentation.
+Extracts standard MusicXML and parses score metadata along with complete instrumentation and MuseScore audio/soundfont settings.
 
-- **Instant Metadata Extraction (Pure Python)**: Unzips `.mscz` archives in memory to parse score properties and instrumentation in milliseconds using Python's standard library (`zipfile` + `xml.etree.ElementTree`).
+- **Instant Metadata & Audio Settings Extraction (Pure Python)**: Unzips `.mscz` archives in memory to parse score properties, instrumentation, and `audiosettings.json` (soundfonts, presets, mixer, FX) in milliseconds using Python's standard library (`zipfile` + `xml.etree.ElementTree` + `json`).
 - **MusicXML Export**: Invokes the MuseScore CLI to export fully rendered MusicXML 4.0 files.
 
 ### CLI Usage
 
 ```bash
-# Extract both MusicXML and metadata JSON:
+# Extract both MusicXML and metadata JSON (includes audioSettings):
 python3 extract_score.py msczs/tbd-ss-8-12.mscz -o extracted/tbd-ss-8-12.musicxml -m extracted/tbd-ss-8-12.json
 
-# Extract metadata only (fast, pure Python, printed to stdout):
+# Extract metadata + audio settings only (fast, pure Python, printed to stdout):
 python3 extract_score.py msczs/tbd-ss-8-12.mscz --meta-only --print-meta
+
+# Extract only audiosettings.json (soundfonts, presets, mixer, FX):
+python3 extract_score.py msczs/tbd-ss-8-12.mscz --audio-only -a audio.json
 
 # Export MusicXML only:
 python3 extract_score.py msczs/tbd-ss-8-12.mscz --xml-only -o score.musicxml
@@ -46,19 +49,25 @@ python3 extract_score.py msczs/tbd-ss-8-12.mscz --xml-only -o score.musicxml
 | `score` | Path to `.mscz` or `.mscx` input file |
 | `-o`, `--output-xml` | Destination file path for `.musicxml` |
 | `-m`, `--metadata-out` | Destination file path for metadata `.json` |
+| `-a`, `--audio-out` | Destination file path for `audiosettings.json` |
 | `--print-meta` | Print formatted metadata JSON to console |
-| `--meta-only` | Only extract metadata (pure Python, skips MuseScore CLI) |
+| `--meta-only` | Only extract metadata + audio settings (pure Python, skips MuseScore CLI) |
+| `--audio-only` | Only extract `audiosettings.json` (pure Python, skips MusicXML export) |
 | `--xml-only` | Only export MusicXML (skips saving metadata JSON) |
 
 ### Python API
 
 ```python
-from extract_score import extract_metadata, export_musicxml, extract_score
+from extract_score import extract_audio_settings, extract_metadata, export_musicxml, extract_score
 
-# Extract metadata dictionary (title, composer, parts, instruments, MIDI):
+# Extract metadata dictionary (title, composer, parts, instruments, MIDI, audioSettings):
 meta = extract_metadata("msczs/tbd-ss-8-12.mscz")
 print(meta["metadata"])
 print(meta["instrumentation"])
+print(meta["audioSettings"])
+
+# Extract only audiosettings.json:
+audio = extract_audio_settings("msczs/tbd-ss-8-12.mscz")
 
 # Export MusicXML:
 xml_path = export_musicxml("msczs/tbd-ss-8-12.mscz", "output.musicxml")
@@ -96,19 +105,23 @@ xml_path, meta = extract_score("msczs/tbd-ss-8-12.mscz", output_json="meta.json"
 
 ---
 
-## 2. `diff_scores.py`: Score Comparison via `musicdiff`
+## 2. `diff_scores.py`: Score Comparison via `musicdiff` & `audiosettings.json`
 
-Compares two scores and reports notation differences (pitches, rhythms, lyrics, dynamics, barlines, staves, ties, etc.).
+Compares two scores and reports notation differences (pitches, rhythms, lyrics, dynamics, barlines, staves, ties, etc.) along with MuseScore audio/soundfont differences (`audiosettings.json` when comparing `.mscz`/`.mscx` files).
 
 - Directly accepts `.mscz`, `.mscx`, or `.musicxml` files.
 - Automatically converts `.mscz` files to MusicXML and caches them in `./extracted`.
+- Compares embedded `audiosettings.json` (soundfonts, presets, mixer, FX) keyed by `(partId, instrumentId)`.
 - Automatically configures `music21`'s MuseScore backend so marked-up PDF generation works seamlessly.
 
 ### CLI Usage
 
 ```bash
-# Print musical notation text diff to stdout:
+# Print musical notation and audio/soundfont diffs to stdout:
 python3 diff_scores.py msczs/tbd-ss-8-12.mscz msczs/tbd-ss-8-16.mscz --text
+
+# Compare only audiosettings.json (soundfonts, presets, mixer, FX; fast, skips musicdiff):
+python3 diff_scores.py msczs/tbd-ss-8-12.mscz msczs/tbd-ss-8-16.mscz --audio-only
 
 # Generate annotated visual comparison PDFs (saved to ./diffs/ by default):
 python3 diff_scores.py msczs/tbd-ss-8-12.mscz msczs/tbd-ss-8-16.mscz --pdf
@@ -122,18 +135,24 @@ python3 diff_scores.py msczs/tbd-ss-8-12.mscz msczs/tbd-ss-8-16.mscz --pdf out1.
 | Argument | Description |
 |---|---|
 | `score1`, `score2` | Paths to the two scores to compare (`.mscz`, `.mscx`, or `.musicxml`) |
-| `-t`, `--text` | Print notation diffs directly to the terminal |
+| `-t`, `--text` | Print notation + audio/soundfont diffs directly to the terminal |
 | `-p`, `--pdf [PDF ...]` | Generate annotated PDFs. Pass 0 arguments for default (`./diffs/<score>_diff.pdf`) or 2 paths |
+| `-a`, `--audio-only` | Compare only `audiosettings.json` (skips MusicXML export and `musicdiff`) |
+| `--no-audio` | Skip `audiosettings.json` comparison during `--text` or `--pdf` diffs |
 | `-c`, `-e`, `--cache-dir` | Directory to cache exported MusicXML files (default: `./extracted`) |
 
 ### Python API
 
 ```python
 from pathlib import Path
-from diff_scores import run_diff
+from diff_scores import diff_audio_settings, format_audio_diff, run_diff
 
-# Console text diff:
+# Console text diff (includes audio settings diff for .mscz/.mscx):
 num_diffs = run_diff("score1.mscz", "score2.mscz", print_text=True)
+
+# Audio/soundfont settings diff only:
+audio_diff = diff_audio_settings("score1.mscz", "score2.mscz")
+print(format_audio_diff(audio_diff))
 
 # Visual PDF diff:
 num_diffs = run_diff(

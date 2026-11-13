@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""extract_score.py - Extract MusicXML and metadata from MuseScore files (.mscz / .mscx).
+"""extract_score.py - Extract MusicXML, metadata, and audio settings from MuseScore files (.mscz / .mscx).
 
 Provides both a CLI and Python API to:
   1. Extract rich score metadata (title, composer, parts, instrumentation, MIDI)
-     directly from the .mscz zip archive in pure Python (no external dependencies).
+     and MuseScore audio/soundfont settings (`audiosettings.json`) directly from
+     the .mscz zip archive in pure Python (no external dependencies).
   2. Export clean, standard MusicXML using the MuseScore CLI.
 
 Usage Examples:
-    # Extract both MusicXML and metadata JSON:
+    # Extract both MusicXML and metadata JSON (including audioSettings):
     $ python3 extract_score.py msczs/tbd-ss-8-12.mscz
 
-    # Extract metadata only (fast, pure Python, printed to console):
+    # Extract metadata + audio settings only (fast, pure Python, printed to console):
     $ python3 extract_score.py msczs/tbd-ss-8-12.mscz --meta-only --print-meta
 
+    # Extract audio settings (soundfonts, mixer, FX) only:
+    $ python3 extract_score.py msczs/tbd-ss-8-12.mscz --audio-only
+
     # Specify custom output paths:
-    $ python3 extract_score.py msczs/tbd-ss-8-12.mscz -o score.musicxml -m meta.json
+    $ python3 extract_score.py msczs/tbd-ss-8-12.mscz -o score.musicxml -m meta.json -a audio.json
 """
 
 import argparse
@@ -92,6 +96,43 @@ def parse_mscx_element_tree(score_path: Path) -> ET.Element:
         raise ValueError(f"Unsupported format '{score_path.suffix}'. Expected .mscz or .mscx.")
 
 
+def _track_sort_key(track: Dict[str, Any]) -> Tuple[int, int | str, str]:
+    """Sort key ordering numeric partIds numerically, then lexicographically."""
+    part_id = str(track.get("partId", ""))
+    inst_id = str(track.get("instrumentId", ""))
+    if part_id.isdigit():
+        return (0, int(part_id), inst_id)
+    return (1, part_id, inst_id)
+
+
+def extract_audio_settings(score_path: Path | str) -> Dict[str, Any]:
+    """Extracts MuseScore's audiosettings.json (soundfonts, mixer, FX) in pure Python."""
+    score_path = Path(score_path)
+    if not score_path.is_file():
+        raise FileNotFoundError(f"File not found: {score_path}")
+
+    suffix = score_path.suffix.lower()
+    raw_bytes: Optional[bytes] = None
+    if suffix == ".mscz":
+        with zipfile.ZipFile(score_path, "r") as archive:
+            if "audiosettings.json" in archive.namelist():
+                raw_bytes = archive.read("audiosettings.json")
+    elif suffix == ".mscx":
+        sibling = score_path.parent / "audiosettings.json"
+        if sibling.is_file():
+            raw_bytes = sibling.read_bytes()
+    else:
+        raise ValueError(f"Unsupported format '{score_path.suffix}'. Expected .mscz or .mscx.")
+
+    if not raw_bytes:
+        return {}
+
+    data: Dict[str, Any] = json.loads(raw_bytes.decode("utf-8"))
+    if isinstance(data.get("tracks"), list):
+        data = {**data, "tracks": sorted(data["tracks"], key=_track_sort_key)}
+    return data
+
+
 def extract_metadata(score_path: Path | str) -> Dict[str, Any]:
     """Extracts score properties and full instrumentation metadata in pure Python."""
     score_path = Path(score_path)
@@ -140,6 +181,7 @@ def extract_metadata(score_path: Path | str) -> Dict[str, Any]:
         "file": score_path.name,
         "metadata": meta,
         "instrumentation": instruments,
+        "audioSettings": extract_audio_settings(score_path),
     }
 
 
@@ -194,20 +236,42 @@ def extract_score(
     return musicxml_path, metadata
 
 
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    """Writes a JSON payload to disk, creating parent directories if needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract MusicXML and metadata from MuseScore files (.mscz / .mscx)."
+        description="Extract MusicXML, metadata, and audio settings from MuseScore files (.mscz / .mscx)."
     )
     parser.add_argument("score", type=Path, help="Path to .mscz or .mscx score file")
     parser.add_argument("-o", "--output-xml", type=Path, help="Destination .musicxml path")
     parser.add_argument("-m", "--metadata-out", type=Path, help="Destination .json path for metadata")
+    parser.add_argument("-a", "--audio-out", type=Path, help="Destination .json path for audiosettings.json")
     parser.add_argument("--print-meta", action="store_true", help="Print extracted metadata JSON to stdout")
     parser.add_argument("--meta-only", action="store_true", help="Only extract metadata (skip MusicXML export)")
+    parser.add_argument(
+        "--audio-only",
+        action="store_true",
+        help="Only extract audiosettings.json (soundfonts, mixer, FX; skips MusicXML export)",
+    )
     parser.add_argument("--xml-only", action="store_true", help="Only export MusicXML (skip saving metadata JSON)")
 
     args = parser.parse_args()
 
-    # 1. Extract metadata
+    if args.audio_only:
+        audio_settings = extract_audio_settings(args.score)
+        if args.audio_out is not None:
+            _write_json(args.audio_out, audio_settings)
+            print(f"Saved audio settings JSON to: {args.audio_out}")
+        else:
+            print(json.dumps(audio_settings, indent=2))
+        return
+
+    # 1. Extract metadata (includes audioSettings)
     metadata = extract_metadata(args.score)
 
     if args.print_meta or args.meta_only:
@@ -215,9 +279,12 @@ def main() -> None:
 
     # Save metadata JSON if requested (or default if not xml-only)
     if not args.xml_only and args.metadata_out is not None:
-        with open(args.metadata_out, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        _write_json(args.metadata_out, metadata)
         print(f"Saved metadata JSON to: {args.metadata_out}")
+
+    if not args.xml_only and args.audio_out is not None:
+        _write_json(args.audio_out, metadata.get("audioSettings", {}))
+        print(f"Saved audio settings JSON to: {args.audio_out}")
 
     # 2. Export MusicXML
     if not args.meta_only:
