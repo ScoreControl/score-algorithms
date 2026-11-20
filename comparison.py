@@ -25,6 +25,7 @@ import music21 as m21
 from music21.common import OffsetQL
 from musicdiff.annotation import AnnScore, AnnNote, AnnVoice, AnnExtra, AnnLyric
 from musicdiff.annotation import AnnStaffGroup, AnnMetadataItem, AnnObject
+from musicdiff.annotation import AnnInstrument
 from musicdiff import M21Utils
 from musicdiff.m21utils import PitchInfo
 
@@ -1464,6 +1465,40 @@ class Comparison:
         return out
 
     @staticmethod
+    def _instruments_diff(
+        instruments1: list[AnnInstrument],
+        instruments2: list[AnnInstrument]
+    ) -> tuple[list[DiffOperation], int]:
+        '''
+        Compare the instruments of two parts, measure by measure (measures are matched
+        by measure number). An 'instrumentedit' operation is generated at each measure
+        where the two parts start playing different instruments (e.g. score1 has a Cello
+        where score2 has a Violin). Following measures with that same pair of instruments
+        are not reported again.
+        '''
+        op_list: list[DiffOperation] = []
+        cost: int = 0
+
+        instruments2_by_measure: dict[str, AnnInstrument] = {}
+        for inst2 in instruments2:
+            # if a measure number repeats, keep the first one
+            instruments2_by_measure.setdefault(inst2.measureNumber, inst2)
+
+        prev_pair: tuple[str, str] | None = None
+        for inst1 in instruments1:
+            inst2_or_none: AnnInstrument | None = instruments2_by_measure.get(inst1.measureNumber)
+            if inst2_or_none is None:
+                # measure is not in score2 (it will show up as a deleted measure)
+                continue
+            pair: tuple[str, str] = (inst1.name, inst2_or_none.name)
+            if inst1.name != inst2_or_none.name and pair != prev_pair:
+                op_list.append(DiffOperation('instrumentedit', inst1, inst2_or_none, 1))
+                cost += 1
+            prev_pair = pair
+
+        return op_list, cost
+
+    @staticmethod
     def annotated_scores_diff(
         score1: AnnScore,
         score2: AnnScore
@@ -1534,6 +1569,14 @@ class Comparison:
                 )
                 op_list_total.extend(op_list_block)
                 cost_total += cost_block
+
+            # compare the instruments (instrument changes)
+            inst_op_list, inst_cost = Comparison._instruments_diff(
+                score1.part_list[p_number].instrument_list,
+                score2.part_list[p_number].instrument_list,
+            )
+            op_list_total.extend(inst_op_list)
+            cost_total += inst_cost
 
         # compare the staff groups
         groups_op_list, groups_cost = Comparison._staff_groups_set_distance(

@@ -17,6 +17,9 @@ import sys
 import copy
 import re
 import typing as t
+import zipfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 # import sys
 import webcolors  # type: ignore
@@ -890,11 +893,26 @@ class M21Utils:
         # barline). Note that we ignore all invisible barlines as well (el.type == 'none')
         # since they are non-printed.  We also try to de-duplicate redundant clefs.
         mostRecentClef: m21.clef.Clef | None = None
+
+        # Instrument changes are compared separately (see AnnPart.instrument_list and
+        # Comparison._instruments_diff), so they are never treated as extras.  We also
+        # skip the "To <instrument>" text that notation programs (e.g. MuseScore)
+        # automatically print at an instrument change, since that text is part of the
+        # instrument change itself (and would otherwise be reported twice).
+        instChangeText: str = ''
+        instChangeName: str | None = M21Utils.measure_instrument_change_name(measure)
+        if instChangeName:
+            instChangeText = 'to ' + instChangeName.lower()
+
         for el in initialList:
             if isinstance(el, m21.instrument.Instrument):
-                if not DetailLevel.includesDirections(detail):
-                    continue
-            elif not DetailLevel.objIsIncluded(el, detail):
+                continue
+            if (instChangeText
+                    and isinstance(el, m21.expressions.TextExpression)
+                    and el.content is not None
+                    and ' '.join(el.content.split()).lower() == instChangeText):
+                continue
+            if not DetailLevel.objIsIncluded(el, detail):
                 # ignore objects that were not requested
                 continue
 
@@ -2407,6 +2425,178 @@ class M21Utils:
         if not name and inst.midiProgram is not None:
             name = f'program {inst.midiProgram}'
         return name or None
+
+    # ------------------------------------------------------------------------------
+    # Instrument changes
+    #
+    # An instrument change can reach us in two ways:
+    #   1. A music21 Instrument object inside a Measure (scores built in music21, and
+    #      some importers).
+    #   2. A MusicXML <sound><instrument-change> (this is how MuseScore writes them).
+    #      music21's MusicXML parser ignores these, so add_musicxml_instrument_changes
+    #      reads them straight from the file and stores the new instrument name on the
+    #      Measure as `musicdiff_instrument_change`.
+    # ------------------------------------------------------------------------------
+
+    @staticmethod
+    def instrument_name(inst: m21.instrument.Instrument | None) -> str:
+        if inst is None:
+            return ''
+        return M21Utils.instrument_to_symbolic(inst, 'instrument', 0) or ''
+
+    @staticmethod
+    def measure_instrument_change_name(measure: m21.stream.Measure) -> str | None:
+        '''
+        Returns the name of the instrument that this measure changes to, or None
+        if there is no instrument change in this measure.  If there are several
+        changes in one measure, the last one wins (it's what is in effect after
+        the measure).
+        '''
+        xmlName: str | None = getattr(measure, 'musicdiff_instrument_change', None)
+        if xmlName:
+            return xmlName
+
+        name: str | None = None
+        for inst in measure.recurse().getElementsByClass(m21.instrument.Instrument):
+            instName: str = M21Utils.instrument_name(inst)
+            if instName:
+                name = instName
+        return name
+
+    @staticmethod
+    def get_initial_instrument_name(part: m21.stream.Part) -> str:
+        # The starting instrument lives directly in the Part (not in a Measure).
+        for inst in part.getElementsByClass(m21.instrument.Instrument):
+            name: str = M21Utils.instrument_name(inst)
+            if name:
+                return name
+        return ''
+
+    @staticmethod
+    def is_secondary_part_staff(part: m21.stream.Part, score: m21.stream.Score) -> bool:
+        '''
+        Returns True if part is the second (or later) staff of a multi-staff instrument
+        (e.g. the left hand of a piano).  Instrument changes only need to be reported
+        once per instrument, on its top staff.
+        '''
+        if not isinstance(part, m21.stream.PartStaff):
+            return False
+        for sg in score.getElementsByClass(m21.layout.StaffGroup):
+            staves: list = list(sg.getSpannedElements())
+            if part not in staves:
+                continue
+            if not all(isinstance(s, m21.stream.PartStaff) for s in staves):
+                continue
+            if staves[0] is not part:
+                return True
+        return False
+
+    @staticmethod
+    def _read_musicxml_root(path: str | Path) -> ET.Element | None:
+        path = Path(path)
+        suffix: str = path.suffix.lower()
+        try:
+            if suffix == '.mxl':
+                with zipfile.ZipFile(path) as zf:
+                    xmlName: str | None = None
+                    try:
+                        container = ET.fromstring(zf.read('META-INF/container.xml'))
+                        rootfile = container.find('.//rootfile')
+                        if rootfile is not None:
+                            xmlName = rootfile.get('full-path')
+                    except KeyError:
+                        pass
+                    if not xmlName:
+                        for n in zf.namelist():
+                            if (not n.startswith('META-INF')
+                                    and n.lower().endswith(('.xml', '.musicxml'))):
+                                xmlName = n
+                                break
+                    if not xmlName:
+                        return None
+                    return ET.fromstring(zf.read(xmlName))
+            if suffix in ('.xml', '.musicxml'):
+                return ET.parse(path).getroot()
+        except (OSError, ET.ParseError, zipfile.BadZipFile, KeyError):
+            return None
+        return None
+
+    @staticmethod
+    def _group_parts_like_musicxml(score: m21.stream.Score) -> list[list[m21.stream.Part]]:
+        # music21 splits a multi-staff MusicXML <part> into several PartStaffs with
+        # ids '<xmlPartId>-Staff1', '<xmlPartId>-Staff2', etc.  Group them back together
+        # so that each group corresponds to one MusicXML <part>.
+        groups: list[list[m21.stream.Part]] = []
+        prevKey: str | None = None
+        for p in score.parts:
+            key: str | None = None
+            if isinstance(p, m21.stream.PartStaff) and isinstance(p.id, str) and '-Staff' in p.id:
+                key = p.id.rsplit('-Staff', 1)[0]
+            if key is not None and key == prevKey and groups:
+                groups[-1].append(p)
+            else:
+                groups.append([p])
+            prevKey = key
+        return groups
+
+    @staticmethod
+    def add_musicxml_instrument_changes(score: m21.stream.Score, path: str | Path) -> None:
+        '''
+        Reads the instrument changes (<sound><instrument-change>) from a MusicXML file
+        (which music21 does not import), and records each one on the corresponding
+        music21 Measure as `measure.musicdiff_instrument_change = '<instrument name>'`.
+        Also records the page scaling as `score.musicdiff_points_per_tenth`, which is
+        used when sizing the instrument change labels.
+
+        Does nothing if the file is not MusicXML, or if its parts can't be matched up
+        with the music21 Score's parts.
+        '''
+        root: ET.Element | None = M21Utils._read_musicxml_root(path)
+        if root is None or root.tag != 'score-partwise':
+            return
+
+        mm: str | None = root.findtext('defaults/scaling/millimeters')
+        tenths: str | None = root.findtext('defaults/scaling/tenths')
+        try:
+            if mm and tenths:
+                score.musicdiff_points_per_tenth = (  # type: ignore
+                    float(mm) / float(tenths) * 72. / 25.4
+                )
+        except (ValueError, ZeroDivisionError):
+            pass
+
+        # instrument id -> instrument name
+        instNames: dict[str, str] = {}
+        for scoreInst in root.iter('score-instrument'):
+            instId: str | None = scoreInst.get('id')
+            instName: str = ' '.join((scoreInst.findtext('instrument-name') or '').split())
+            if instId and instName:
+                instNames[instId] = instName
+
+        xmlParts: list[ET.Element] = root.findall('part')
+        partGroups: list[list[m21.stream.Part]] = M21Utils._group_parts_like_musicxml(score)
+        if len(xmlParts) != len(partGroups):
+            # can't safely tell which music21 part is which MusicXML part
+            return
+
+        for xmlPart, m21Parts in zip(xmlParts, partGroups):
+            measuresPerStaff: list[list[m21.stream.Measure]] = [
+                list(p.getElementsByClass(m21.stream.Measure)) for p in m21Parts
+            ]
+            for measIdx, xmlMeasure in enumerate(xmlPart.findall('measure')):
+                newName: str | None = None
+                for sound in xmlMeasure.iter('sound'):
+                    for change in sound.findall('instrument-change'):
+                        changeId: str | None = change.get('id')
+                        if changeId and changeId in instNames:
+                            newName = instNames[changeId]
+                if not newName:
+                    continue
+                for staffMeasures in measuresPerStaff:
+                    if measIdx < len(staffMeasures):
+                        staffMeasures[measIdx].musicdiff_instrument_change = (  # type: ignore
+                            newName
+                        )
 
     @staticmethod
     def extra_to_string(

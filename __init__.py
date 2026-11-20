@@ -153,6 +153,9 @@ def diff(
                 )
                 if t.TYPE_CHECKING:
                     assert isinstance(sc, m21.stream.Score)
+                if isinstance(sc, m21.stream.Score):
+                    # music21 doesn't import MusicXML instrument changes; add them.
+                    M21Utils.add_musicxml_instrument_changes(sc, score1)
                 score1 = sc
 
             except Exception as e:
@@ -177,6 +180,9 @@ def diff(
                 sc = m21.converter.parse(score2, forceSource=force_parse)
                 if t.TYPE_CHECKING:
                     assert isinstance(sc, m21.stream.Score)
+                if isinstance(sc, m21.stream.Score):
+                    # music21 doesn't import MusicXML instrument changes; add them.
+                    M21Utils.add_musicxml_instrument_changes(sc, score2)
                 score2 = sc
             except Exception as e:
                 print(f'score2 ({fileName2}) could not be parsed by music21', file=sys.stderr)

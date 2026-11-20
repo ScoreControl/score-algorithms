@@ -1413,6 +1413,51 @@ class AnnMeasure(AnnObject):
         return notes_id
 
 
+class AnnInstrument(AnnObject):
+    def __init__(
+        self,
+        measure: m21.stream.Measure,
+        part: m21.stream.Part,
+        name: str,
+        is_change: bool
+    ) -> None:
+        '''
+        The instrument that is in effect in one measure of a part.  One AnnInstrument
+        is made for every measure, so that the instruments of two scores can be compared
+        measure by measure.
+
+        Args:
+            measure (music21.stream.Measure): The measure (this is what gets annotated
+                when drawing the instrument change).
+            part (music21.stream.Part): the enclosing music21 Part.
+            name (str): The name of the instrument in effect in this measure
+                (e.g. 'Violin').
+            is_change (bool): True if the instrument changes in this measure.
+        '''
+        super().__init__(measure)
+        self.name: str = name
+        self.is_change: bool = is_change
+        self.measureNumber: str = M21Utils.get_measure_number_with_suffix(measure, part)
+
+    def readable_str(self, name: str = '', idx: int = 0, changedStr: str = '') -> str:
+        return self.name or '(no instrument)'
+
+    def notation_size(self) -> int:
+        # an instrument change is one printed symbol (e.g. 'To Violin')
+        return 1 if self.is_change else 0
+
+    def __str__(self) -> str:
+        return f'Instrument({self.name})'
+
+    def __repr__(self) -> str:
+        return f'Instrument({self.id}):{self.name}@{self.measureNumber}'
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, AnnInstrument):
+            return False
+        return self.name == other.name
+
+
 class AnnPart(AnnObject):
     def __init__(
         self,
@@ -1450,6 +1495,22 @@ class AnnPart(AnnObject):
                 prev_ann_bar = ann_bar
         self.n_of_bars: int = len(self.bar_list)
 
+        # The instrument in effect in every measure (including empty measures, which
+        # are left out of bar_list).  Only computed for the top staff of a multi-staff
+        # instrument, so that a piano's instrument change is reported only once.
+        self.instrument_list: list[AnnInstrument] = []
+        if (DetailLevel.includesDirections(detail)
+                and not M21Utils.is_secondary_part_staff(part, score)):
+            current_inst: str = M21Utils.get_initial_instrument_name(part)
+            for measure in part.getElementsByClass('Measure'):
+                change: str | None = M21Utils.measure_instrument_change_name(measure)
+                is_change: bool = bool(change) and change != current_inst
+                if change:
+                    current_inst = change
+                self.instrument_list.append(
+                    AnnInstrument(measure, part, current_inst, is_change)
+                )
+
         # Precomputed str to speed up the computation.
         # String itself is pretty long, so it is hashed
         self.precomputed_str: int = hash(self.__str__())
@@ -1482,7 +1543,10 @@ class AnnPart(AnnObject):
             int: The notation size of the annotated part
         '''
         if self._cached_notation_size is None:
-            self._cached_notation_size = sum([b.notation_size() for b in self.bar_list])
+            self._cached_notation_size = (
+                sum([b.notation_size() for b in self.bar_list])
+                + sum([i.notation_size() for i in self.instrument_list])
+            )
         return self._cached_notation_size
 
     def __repr__(self) -> str:

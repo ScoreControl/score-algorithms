@@ -23,7 +23,7 @@ from fractions import Fraction
 import music21 as m21
 from music21.common import OffsetQL, opFrac
 
-from musicdiff.annotation import AnnScore, AnnExtra, AnnNote, AnnObject
+from musicdiff.annotation import AnnScore, AnnExtra, AnnNote, AnnObject, AnnInstrument
 from musicdiff.comparison import DiffOperation
 from musicdiff import M21Utils
 from musicdiff import DetailLevel
@@ -282,6 +282,94 @@ class Visualization:
             if color_accidental_too and hasattr(m21_obj, 'pitch'):
                 if m21_obj.pitch.accidental:
                     m21_obj.pitch.accidental.style.color = color
+
+    # Instrument change labels ('Cello -> Violin', printed above the measure).
+    # The label is printed on one line at INSTRUMENT_LABEL_FONT_SIZE if it fits over
+    # the measure. If not, the font is shrunk to fit, but never below
+    # INSTRUMENT_LABEL_MIN_FONT_SIZE. If it still doesn't fit at that size, the label
+    # is split onto two lines ('Cello ->' / 'Violin').
+    INSTRUMENT_LABEL_FONT_SIZE: float = 10.
+    INSTRUMENT_LABEL_MIN_FONT_SIZE: float = 7.
+    INSTRUMENT_LABEL_ARROW: str = '->'
+    # Average character width, as a fraction of the font size (bold text is a
+    # little wider than normal text).
+    _LABEL_CHAR_WIDTH_EM: float = 0.58
+    # MusicXML's default scaling (7mm per 40 tenths), in points per tenth
+    _DEFAULT_POINTS_PER_TENTH: float = 7. / 40. * 72. / 25.4
+
+    @staticmethod
+    def _measure_width_in_points(measure: m21.stream.Measure) -> float:
+        # Use the measure width from the file if there is one (MuseScore writes it),
+        # otherwise make an estimate from how many notes/rests are in the measure.
+        layoutWidth = getattr(measure, 'layoutWidth', None)
+        if layoutWidth:
+            score: m21.stream.Score | None = measure.getContextByClass(m21.stream.Score)
+            pointsPerTenth: float = getattr(
+                score, 'musicdiff_points_per_tenth', Visualization._DEFAULT_POINTS_PER_TENTH
+            )
+            try:
+                return float(layoutWidth) * pointsPerTenth
+            except (TypeError, ValueError):
+                pass
+
+        numNotes: int = len(measure.recurse().notesAndRests)
+        return min(max(20. + 22. * numNotes, 80.), 250.)
+
+    @staticmethod
+    def _fit_instrument_label(
+        old_name: str,
+        new_name: str,
+        available_width: float
+    ) -> tuple[str, float]:
+        '''
+        Returns the label text (possibly with a line break) and the font size (in points)
+        that fits the label above a measure that is available_width points wide.
+        '''
+        arrow: str = Visualization.INSTRUMENT_LABEL_ARROW
+        maxSize: float = Visualization.INSTRUMENT_LABEL_FONT_SIZE
+        minSize: float = Visualization.INSTRUMENT_LABEL_MIN_FONT_SIZE
+        charEm: float = Visualization._LABEL_CHAR_WIDTH_EM
+
+        def size_to_fit(text_lines: list[str]) -> float:
+            longest: int = max(len(line) for line in text_lines)
+            if longest == 0:
+                return maxSize
+            return available_width / (longest * charEm)
+
+        # 1. one line, as large as possible (but no larger than the normal size)
+        oneLine: str = f'{old_name} {arrow} {new_name}'
+        size: float = size_to_fit([oneLine])
+        if size >= minSize:
+            return oneLine, round(min(size, maxSize), 1)
+
+        # 2. too small on one line, so use two lines (and shrink if still needed,
+        # but never below the minimum size)
+        twoLines: list[str] = [f'{old_name} {arrow}', new_name]
+        size = size_to_fit(twoLines)
+        return '\n'.join(twoLines), round(min(max(size, minSize), maxSize), 1)
+
+    @staticmethod
+    def _draw_instrument_change(op: DiffOperation) -> None:
+        # Draws e.g. 'Cello -> Violin' above the measure where the instruments of the
+        # two scores start to differ, in both scores.  The notes are not colored.
+        assert isinstance(op.obj1, AnnInstrument)
+        assert isinstance(op.obj2, AnnInstrument)
+        old_name: str = op.obj1.readable_str()
+        new_name: str = op.obj2.readable_str()
+
+        for annInst in (op.obj1, op.obj2):
+            measure = annInst.get_object()
+            if not isinstance(measure, m21.stream.Measure):
+                continue
+            text, fontSize = Visualization._fit_instrument_label(
+                old_name, new_name, Visualization._measure_width_in_points(measure)
+            )
+            textExp = m21.expressions.TextExpression(text)
+            textExp.placement = 'above'
+            textExp.style.color = Visualization.CHANGED_COLOR
+            textExp.style.fontWeight = 'bold'
+            textExp.style.fontSize = fontSize
+            measure.insert(0., textExp)
 
     @staticmethod
     def _dict_change_str(dict1: dict[str, str], dict2: dict[str, str]) -> str:
@@ -1259,6 +1347,20 @@ class Visualization:
                 text_diff = vis_func(op, score1, score2, name='metadata', opname='deleted')
                 if text_diff is not None:
                     outputList.extend(text_diff)
+                continue
+
+            # instrument change
+            if op.name == 'instrumentedit':
+                assert isinstance(op.obj1, AnnInstrument)
+                assert isinstance(op.obj2, AnnInstrument)
+                if vis_type == 'draw':
+                    Visualization._draw_instrument_change(op)
+                else:
+                    text_diff = vis_func(
+                        op, score1, score2, opname='changed', name='instrument'
+                    )
+                    if text_diff is not None:
+                        outputList.extend(text_diff)
                 continue
 
             if op.name == 'mditemvalueedit':
